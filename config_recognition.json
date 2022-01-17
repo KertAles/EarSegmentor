@@ -1,0 +1,4 @@
+{
+    "images_path" : "./data/ears/",
+    "annotations_path" : "./data/ears/annotations/recognition/"
+}

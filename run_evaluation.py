@@ -83,7 +83,10 @@ class EvaluateAll:
         acc_arr = []
         preprocess = Preprocess()
         eval = Evaluation()
+      
+        self.cutout_img_dir = './data/ears/train_c/'
         
+
         # Change the following detector and/or add your detectors below
         import detectors.your_super_detector.cnn_segmentation as cnn_segmentation
         import detectors.cutout_segment.cutout_seg as cutout_seg
@@ -92,10 +95,133 @@ class EvaluateAll:
         
         segmentor_cnn = cnn_segmentation.Segmentor()
         segmentor = cutout_seg.Segmentor()
-        segmentor_cnn.load_model('model_36')
-        segmentor.load_model('model_39')
+
+        segmentor_cnn.load_model('model_38')
+        segmentor.load_model('model_47')
         
         draw = False
+                
+        #whole cnn + centroid pred
+        #predictions = segmentor_cnn.segment_list(im_list)
+        
+        
+        for idx, im_name in enumerate(im_list) :
+            #print(im_name)
+            predictions = segmentor_cnn.segment_list([im_name])
+
+            annot_file = im_name.split('/')[-1]
+            annot_name = os.path.join(self.annotations_path, annot_file)
+            annot = load_img(annot_name, color_mode="grayscale")
+            annot = np.expand_dims(annot, axis=-1) / 255
+            
+            img_file = im_name.split('/')[-1]
+            img_name = os.path.join(self.images_path, img_file)
+            org_img = np.array(load_img(img_name))
+        
+
+            p = np.zeros((360, 480, 1))
+            gt = annot
+
+            kernel = np.ones((5, 5, 1), 'uint8')
+            eroded_mask = morphology.dilation(self.get_mask(predictions[0]), selem=kernel)
+            
+            if np.max(eroded_mask) > 0 :
+                labels = label(eroded_mask)
+                centers = center_of_mass(eroded_mask, labels=labels[0], index=list(range(1,labels[1]+1)))
+ 
+                yolo_list = []
+                
+                for center in centers :
+                    yolo_list.append((round(center[1]) , round(center[0]), 0, 0))                    
+                
+                #with open('C:/Users/Kert PC/Desktop/SB/data/ears/annotations/cutout/train/' + annot_file.split('.')[0] + '.txt', 'w') as f:
+                #    for yolo in yolo_list :
+                #        f.write('0 ' + str(yolo[0]) + ' ' + str(yolo[1]) + ' ' + str(yolo[2])  + ' ' + str(yolo[3]) + '\n')
+                
+                        
+                
+                cutout_predictions = segmentor.segment_list_w_bb([im_name], yolo_list)
+                
+                for j, pred in enumerate(cutout_predictions):
+                    x, y, w, h = yolo_list[j]
+                    
+                    x = x + w // 2
+                    y = y + h // 2
+
+                    fixed_size = 64
+                    offset_y = abs(min(y-fixed_size, 0))
+                    offset_x = abs(min(x-fixed_size, 0))
+                    
+                    start_y = y-fixed_size+offset_y
+                    start_x = x-fixed_size+offset_x
+                    
+                    shape = np.shape(p[start_y:y+fixed_size, start_x:x+fixed_size])
+                    
+                    c_img = org_img[start_y:start_y+shape[0], start_x:start_x+shape[1]]
+                    mask = self.get_mask(pred)[offset_y:offset_y + shape[0],offset_x:offset_x + shape[1], 0]
+
+                    result = c_img.copy()
+                    result[mask==0] = (0,0,0)
+                    #plt.imshow(result);
+                    
+                    results_idxs = np.nonzero(result[:, :, 0])
+                    if len(results_idxs[0] > 0) :
+                        i_leftmost = np.min(results_idxs[0])
+                        i_rightmost = np.max(results_idxs[0])
+                        
+                        i_topmost = np.min(results_idxs[1])
+                        i_bottommost = np.max(results_idxs[1])
+                        
+                        nu_img = Image.fromarray(result[i_leftmost:i_rightmost, i_topmost:i_bottommost, :], 'RGB')
+                        
+                        #plt.imshow();
+                        
+                        nu_img = nu_img.save(os.path.join(self.cutout_img_dir, im_name.split('/')[-1].split('.')[0] + '_' + str(j+1) + '.png'))
+                        
+                        
+                        
+                    p[start_y:start_y+shape[0],
+                      start_x:start_x+shape[1]] = np.logical_or(
+                                                      p[start_y:start_y+shape[0],
+                                                      start_x:start_x+shape[1]],
+                                                      self.get_mask(pred)[offset_y:offset_y + shape[0],
+                                                                          offset_x:offset_x + shape[1]]) 
+                          
+                          
+                
+        
+            iou = eval.iou_compute(p, gt)
+            pr, re, f1, acc = eval.prref1_compute(p, gt)
+            iou_arr.append(iou)
+            pr_arr.append(pr)
+            re_arr.append(re)
+            f1_arr.append(f1)
+            acc_arr.append(acc)
+
+            
+            if draw :
+                fig = plt.figure(figsize=(9, 9))
+                grid = ImageGrid(fig, 111, 
+                             nrows_ncols=(1, 4),
+                             axes_pad=0.1, 
+                             )
+                
+                for ax, j in zip(grid, range(0, 4)) :
+
+                    if j == 0:
+                        ax.imshow(cv2.imread(im_name))
+                    elif j == 1:
+                        ax.imshow(PIL.ImageOps.autocontrast(array_to_img(gt)))
+                    elif j == 2:
+                        ax.imshow(PIL.ImageOps.autocontrast(array_to_img(self.get_mask(predictions[0]))))
+                    elif j == 3:
+                        ax.imshow(PIL.ImageOps.autocontrast(array_to_img(p)))
+                        
+                plt.show()
+            
+        
+        
+        
         """
         # Change the following detector and/or add your detectors below
         import detectors.cascade_detector.detector as cascade_detector
@@ -106,11 +232,12 @@ class EvaluateAll:
         for im_name in im_list:
             img = cv2.imread(im_name)
             
+
             annot_file = im_name.split('/')[-1]
             annot_name = os.path.join(self.annotations_path, annot_file)
             annot = load_img(annot_name, color_mode="grayscale")
             annot = np.expand_dims(annot, axis=-1) / 255
-       
+
             p = np.zeros((360, 480, 1))
             gt = annot
             
@@ -136,7 +263,7 @@ class EvaluateAll:
                     shape = np.shape(p[start_y:y+fixed_size, start_x:x+fixed_size])
                         
                     p[start_y:start_y+shape[0], start_x:start_x+shape[1]] = np.logical_or(p[start_y:start_y+shape[0], start_x:start_x+shape[1]], self.get_mask(pred)[offset_y:offset_y + shape[0], offset_x:offset_x + shape[1]]) 
-    
+   
 
 
             iou = eval.iou_compute(p, gt)
@@ -163,11 +290,11 @@ class EvaluateAll:
                         ax.imshow(PIL.ImageOps.autocontrast(array_to_img(p)))
                         
                 plt.show()
-        
-        
-        """
+
         
         """
+        """
+        
         #whole cnn
         predictions = segmentor_cnn.segment_list(im_list)
         
@@ -181,11 +308,10 @@ class EvaluateAll:
             
             #print(annot_name)
 
+
             p = self.get_mask(predictions[idx])
             gt = annot
             
-
-
 
             iou = eval.iou_compute(p, gt)
             pr, re, f1, acc = eval.prref1_compute(p, gt)
@@ -212,93 +338,9 @@ class EvaluateAll:
                         
                 plt.show()
                 
+        
         """
-        
-        #whole cnn + centroid pred
-        predictions = segmentor_cnn.segment_list(im_list)
-        
-        
-        for idx, im_name in enumerate(im_list) :
-            annot_file = im_name.split('/')[-1]
-            annot_name = os.path.join(self.annotations_path, annot_file)
-            annot = load_img(annot_name, color_mode="grayscale")
-            annot = np.expand_dims(annot, axis=-1) / 255
-            
-            #print(annot_name)
 
-            p = np.zeros((360, 480, 1))
-            gt = annot
-            
-            
-            kernel = np.ones((5, 5, 1), 'uint8')
-            
-            eroded_mask = morphology.dilation(self.get_mask(predictions[idx]), selem=kernel)
-            eroded_mask = morphology.erosion(eroded_mask, selem=kernel)
-            #eroded_mask = morphology.erosion(eroded_mask, selem=kernel)
-            eroded_mask = morphology.erosion(eroded_mask, selem=kernel)
-            #eroded_mask = morphology.dilation(eroded_mask, selem=kernel).astype('uint8')
-        
-            
-            if np.max(eroded_mask) > 0 :
-                labels = label(eroded_mask)
-                centers = center_of_mass(eroded_mask, labels=labels[0], index=list(range(1,labels[1]+1)))
- 
-                yolo_list = []
-                
-                for center in centers :
-                    yolo_list.append((round(center[1]) - 64 , round(center[0]) - 64, 128, 128))
-            
-                cutout_predictions = segmentor.segment_list_w_bb([im_name], yolo_list)
-                
-                for j, pred in enumerate(cutout_predictions):
-                    x, y, w, h = yolo_list[j]
-                        
-                    x = x + w // 2
-                    y = y + h // 2
-
-
-                    fixed_size = 64
-                    offset_y = abs(min(y-fixed_size, 0))
-                    offset_x = abs(min(x-fixed_size, 0))
-                    
-                    start_y = y-fixed_size+offset_y
-                    start_x = x-fixed_size+offset_x
-    
-                    shape = np.shape(p[start_y:y+fixed_size, start_x:x+fixed_size])
-                    
-                    p[start_y:start_y+shape[0], start_x:start_x+shape[1]] = np.logical_or(p[start_y:start_y+shape[0], start_x:start_x+shape[1]], self.get_mask(pred)[offset_y:offset_y + shape[0], offset_x:offset_x + shape[1]]) 
-
-
-            iou = eval.iou_compute(p, gt)
-            pr, re, f1, acc = eval.prref1_compute(p, gt)
-            iou_arr.append(iou)
-            pr_arr.append(pr)
-            re_arr.append(re)
-            f1_arr.append(f1)
-            acc_arr.append(acc)
-            
-            
-            if draw :
-                fig = plt.figure(figsize=(8, 8))
-                grid = ImageGrid(fig, 111, 
-                             nrows_ncols=(1, 4),
-                             axes_pad=0.1, 
-                             )
-                
-                for ax, j in zip(grid, range(0, 4)) :
-                    if j == 0:
-                        ax.imshow(cv2.imread(im_name))
-                    elif j == 1:
-                        ax.imshow(PIL.ImageOps.autocontrast(array_to_img(gt)))
-                    elif j == 2:
-                        ax.imshow(PIL.ImageOps.autocontrast(array_to_img(self.get_mask(predictions[idx]))))
-                    elif j == 3:
-                        ax.imshow(PIL.ImageOps.autocontrast(array_to_img(p)))
-                        
-                plt.show()
-               
-        
-        
         """
         #centered cutout
         for im_name in im_list:
@@ -362,7 +404,7 @@ class EvaluateAll:
                         ax.imshow(PIL.ImageOps.autocontrast(array_to_img(p)))
                         
                 plt.show()
-        
+
         """
         
         miou = np.average(iou_arr)  

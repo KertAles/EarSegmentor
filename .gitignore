@@ -11,6 +11,12 @@ __pycache__/
 build/
 develop-eggs/
 dist/
+data/*
+LaTeX/*
+detectors/cutout_segment/ear_segmentation/*
+detectors/your_super_detector/ear_segmentation/*
+feature_extractors/your_super_extractor/ear_segmentation/*
+models/*
 downloads/
 eggs/
 .eggs/

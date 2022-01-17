@@ -1,0 +1,5 @@
+{
+    "images_path" : "./data/ears/train/",
+    "annotations_path" : "./data/ears/annotations/segmentation/train/",
+	"zones_path" : "./data/ears/annotations/cutout/train"
+}

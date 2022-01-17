@@ -19,11 +19,16 @@ from tensorflow.keras.preprocessing.image import load_img
 from tensorflow.keras import layers
 import tensorflow_addons as tfa
 from scipy import ndimage
-from tensorflow.keras.layers import BatchNormalization, Conv2D, MaxPooling2D, Dropout, UpSampling2D, concatenate
+from tensorflow.keras.layers import BatchNormalization, DepthwiseConv2D, Conv2D, MaxPooling2D, Dropout, UpSampling2D, concatenate
 import pandas as pd
 from focal_loss import SparseCategoricalFocalLoss
 from skimage.color import rgb2hsv, hsv2rgb
 import scipy
+
+from tensorflow.keras.layers import Conv2D, BatchNormalization, Activation, MaxPool2D, Conv2DTranspose, Concatenate, Input, Add
+from tensorflow.keras.layers import AveragePooling2D, GlobalAveragePooling2D, UpSampling2D, Reshape, Dense, LeakyReLU, MaxPooling2D, Dropout
+from tensorflow.keras.models import Model
+from tensorflow.keras.applications import EfficientNetB0, ResNet50
 
 import cv2
 
@@ -138,7 +143,8 @@ class EarImages(keras.utils.Sequence):
             plt.show()
         """
     
-        return ret_img
+        return ret_img.astype('uint8')
+
 
 
     def __init__(self, images, masks, batch_size=8, img_size=(512,608), yolo_dir='', yolo_list=[]):
@@ -179,8 +185,9 @@ class EarImages(keras.utils.Sequence):
         
         for j, path in enumerate(batch_images):
             img = np.array(load_img(path, color_mode="rgb"))
-            img = self.histogram_equlization_rgb(img)
-        
+
+            #img = self.histogram_equlization_rgb(img)
+
             if self.yolo_dir != '' :
                 annot_name = os.path.join(self.yolo_dir, Path(os.path.basename(path)).stem) + '.txt'
                 annot_list = self.get_annotations(annot_name)
@@ -193,14 +200,15 @@ class EarImages(keras.utils.Sequence):
             for annot in annot_list :
                 
                 subimg = self.cutout_img(img, annot)
-                
+                subimg = self.histogram_equlization_rgb(subimg)
+
                 minimg = np.min(subimg)
                 maximg = np.max(subimg)
                 
                 if minimg < maximg:
                     subimg = subimg - minimg
                     subimg = ((subimg / np.max(subimg)) * 2) - 1
-                
+
                 x.append(subimg)
             
 
@@ -234,11 +242,14 @@ class Segmentor:
     
     
     def __init__(self) :
-        self.input_dir = 'C:/Users/Kert PC/Desktop/SB/data/ears/'
-        self.target_dir = 'C:/Users/Kert PC/Desktop/SB/data/ears/annotations/segmentation/'
-        self.model_dir = 'C:/Users/Kert PC/Desktop/SB/models/cutout/'
-        self.yolo_dir = 'C:/Users/Kert PC/Desktop/SB/data/ears/annotations/detection/train_YOLO_format'
-        self.yolo_dir_test = 'C:/Users/Kert PC/Desktop/SB/data/ears/annotations/detection/test_YOLO_format'
+        self.input_dir = './data/ears/'
+        self.target_dir = './data/ears/annotations/segmentation/'
+        self.model_dir = './models/cutout/'
+        #self.yolo_dir = 'C:/Users/Kert PC/Desktop/SB/data/ears/annotations/detection/train_YOLO_format'
+        #self.yolo_dir_test = 'C:/Users/Kert PC/Desktop/SB/data/ears/annotations/detection/test_YOLO_format'
+        self.yolo_dir = './data/ears/annotations/cutout/train'
+        self.yolo_dir_test = './data/ears/annotations/cutout/test'
+
 
     def segment(self, img) :
         result = self.model.predict(img)
@@ -247,12 +258,13 @@ class Segmentor:
 
     def segment_list(self, img_list) :
         val_images = sorted(
-            [   os.path.join(self.input_dir, fname)
+            [   os.path.join(self.input_dir, fname.split('/')[-2], fname.split('/')[-1])
                 for fname in img_list ] )
         
         val_masks = sorted(
-            [   os.path.join(self.target_dir, fname)
-                for fname in img_list ] )
+            [   os.path.join(self.target_dir, fname.split('/')[-2], fname.split('/')[-1])
+                for fname in img_list] )
+        
         
         keras.backend.clear_session()
     
@@ -263,12 +275,13 @@ class Segmentor:
 
     def segment_list_w_bb(self, img_list, yolo_list) :
         val_images = sorted(
-            [   os.path.join(self.input_dir, fname)
+            [   os.path.join(self.input_dir, fname.split('/')[-2], fname.split('/')[-1])
                 for fname in img_list ] )
         
         val_masks = sorted(
-            [   os.path.join(self.target_dir, fname)
-                for fname in img_list ] )
+            [   os.path.join(self.target_dir, fname.split('/')[-2], fname.split('/')[-1])
+                for fname in img_list] )
+
         
         keras.backend.clear_session()
     
@@ -283,23 +296,11 @@ class Segmentor:
             [   os.path.join(self.input_dir + 'train/', fname)
                 for fname in os.listdir(self.input_dir + 'train/')
                 if fname.endswith(".png") ] )
-        """
-        val_images = sorted(
-            [   os.path.join(self.input_dir + 'test/', fname)
-                for fname in os.listdir(self.input_dir + 'test/')
-                if fname.endswith(".png") ] )
-        """
+
         train_masks = sorted(
             [   os.path.join(self.target_dir + 'train/', fname)
                 for fname in os.listdir(self.target_dir + 'train/')
                 if fname.endswith(".png") ] )
-        """
-        val_masks = sorted(
-            [   os.path.join(self.target_dir + 'test/', fname)
-                for fname in os.listdir(self.target_dir + 'test/')
-                if fname.endswith(".png") ] )
-        """
-    
         
         val_masks = train_masks[-80:]
         val_images = train_images[-80:]
@@ -318,6 +319,8 @@ class Segmentor:
         #val_gen = EarImages(val_images, val_masks, batch_size=batch_size, yolo_list=yolo_list)
         
         inputs, outputs, self.model = self.unet_model_blocks(block_number=block_number, filter_number=filter_number)
+  
+        #self.model = self.get_model()
         
         self.model.compile(optimizer="adam", loss=SparseCategoricalFocalLoss(gamma=2), metrics=["sparse_categorical_accuracy"])
             
@@ -349,6 +352,13 @@ class Segmentor:
     def load_model(self, model_name) :
         self.model = keras.models.load_model(self.model_dir + model_name)
 
+    def get_model(self):
+         #model = get_efficient_unet_b0((None, None, 3),
+         #    pretrained=True, block_type='transpose', concat_input=True, out_channels=2)
+         model = EfficientNetB0(input_shape=(None, None, 3), classes=2, include_top=False, pooling='max')
+
+         return model
+
 
     def unet_model_blocks(self, inputs=None, num_classes=2, block_number=3, filter_number=16):
         if inputs is None:
@@ -356,7 +366,7 @@ class Segmentor:
             
             inputs = layers.Input((None, None) + (num_of_channels, ))
             
-        drop_rate = 0.1
+
         filter_num = filter_number
         x = inputs
         block_features = []
@@ -364,8 +374,11 @@ class Segmentor:
             fn_cur = filter_num*(2**(i))
             conv1 = Conv2D(fn_cur, (3, 3), activation="relu", padding="same")(x)
             conv1 = Conv2D(fn_cur, (3, 3), activation="relu", padding="same")(conv1)
-            conv1 = Dropout(drop_rate)(conv1)
+
+            conv1 = self.inverted_residual_block(conv1, fn_cur*2, fn_cur)
             block_features.append(conv1)
+            conv1 = Dropout(0.15)(conv1)
+
             pool1 = MaxPooling2D(pool_size=(2, 2))(conv1)
             x = pool1
 
@@ -373,7 +386,8 @@ class Segmentor:
         conv3 = Conv2D(fn_cur, (3, 3), activation="relu", padding="same")(x)
         conv3 = Conv2D(fn_cur, (3, 3), activation="relu", padding="same")(conv3)
         conv3 = BatchNormalization()(conv3)
-        drop3 = Dropout(drop_rate)(conv3)
+        drop3 = Dropout(0.15)(conv3)
+
         x = drop3
         for i in range(block_number):
             fn_cur = filter_num*(2**(block_number - i - 1))
@@ -383,7 +397,9 @@ class Segmentor:
             
             conv8 = Conv2D(fn_cur, (3, 3), activation="relu", padding="same")(merge8)
             conv8 = Conv2D(fn_cur, (3, 3), activation='relu', padding='same')(conv8)
-            conv8 = Dropout(drop_rate)(conv8)
+            conv8 = self.inverted_residual_block(conv8, fn_cur*2, fn_cur)
+            conv8 = Dropout(0.15)(conv8)
+
             x = conv8
 
         conv10 = Conv2D(num_classes, (3,3), activation='softmax', padding="same")(x)
@@ -393,11 +409,18 @@ class Segmentor:
         return inputs, conv10, model
     
     
+    def inverted_residual_block(self, x, expand=64, squeeze=16):
+          m = Conv2D(expand, (1,1), activation='relu', padding="same")(x)
+          m = DepthwiseConv2D((3,3), activation='relu', padding="same")(m)
+          m = Conv2D(squeeze, (1,1), activation='relu', padding="same")(m)
+          return Add()([m, x])
+
     
 
 if __name__ == '__main__':
     segmentor = Segmentor()
-    segmentor.train_model(batch_size=16, num_epochs=50, block_number=4, filter_number=16)
+    segmentor.train_model(batch_size=16, num_epochs=50, block_number=4, filter_number=18)
+
     
     
     print('blah')
